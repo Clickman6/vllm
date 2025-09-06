@@ -1,1 +1,2 @@
-Для запуска достаточно запустить devcontainer и выполнить task up или без devcontainer docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+- Выполнить git submodule update --init --recursive
+- Для запуска достаточно запустить devcontainer и выполнить task build и task up или без devcontainer docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
