@@ -1,0 +1,89 @@
+services:
+  vllm:
+    command: >
+      --model ${VLLM_MODEL}
+      --dtype bfloat16
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.vllm-http.entrypoints=web"
+      - "traefik.http.routers.vllm-http.rule=Host(`vllm.llm.test`)"
+      - "traefik.http.routers.vllm-http.service=vllm"
+      - "traefik.http.services.vllm.loadbalancer.server.port=8000"
+
+  mlflow:
+    command: >
+      mlflow server
+      --backend-store-uri postgresql://${DB_USERNAME}@${DB_HOST}:${DB_PORT}/${DB_DATABASE}
+      --default-artifact-root s3://${AWS_BUCKET}/
+      --host 0.0.0.0
+      --port 5000
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mlflow-http.entrypoints=web"
+      - "traefik.http.routers.mlflow-http.rule=Host(`mlflow.llm.test`)"
+      - "traefik.http.routers.mlflow-http.service=mlflow"
+      - "traefik.http.services.mlflow.loadbalancer.server.port=${MLFLOW_PORT}"
+    depends_on:
+      - minio-init
+
+  pgsql:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.tcp.routers.db.entrypoints=pgsql"
+      - "traefik.tcp.routers.db.rule=HostSNI(`*`)"
+      - "traefik.tcp.routers.db.tls=false"
+      - "traefik.tcp.services.postgres.loadbalancer.server.port=5432"
+      - "traefik.tcp.routers.db.service=db"
+
+  minio:
+    command: server /data --console-address ":9001"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.minio-http.entrypoints=web"
+      - "traefik.http.routers.minio-http.rule=Host(`minio.llm.test`)"
+      - "traefik.http.services.minio.loadbalancer.server.port=9001"
+
+  prometheus:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.prometheus-http.entrypoints=web"
+      - "traefik.http.routers.prometheus-http.rule=Host(`prometheus.llm.test`)"
+      - "traefik.http.routers.prometheus-http.service=prometheus"
+      - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
+
+  grafana:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana-http.entrypoints=web"
+      - "traefik.http.routers.grafana-http.rule=Host(`grafana.llm.test`)"
+      - "traefik.http.routers.grafana-http.service=grafana"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+
+  reverse-proxy:
+    image: traefik:v3.5.0
+    command:
+      - "--accesslog"
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.traefik.address=:8888"
+      - "--providers.file.watch=true"
+      - "--api.dashboard=true"
+    ports:
+      - "80:80"
+      - "8888:8888"
+      - "5432:5432"
+      - "5333:5000"
+      - "8000:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  minio-init:
+    image: minio/mc
+    entrypoint: >
+      /bin/sh -c "sleep 5 && mc alias set local http://minio:9000 ${AWS_ACCESS_KEY_ID} ${AWS_SECRET_ACCESS_KEY} && mc mb ${AWS_DEFAULT_REGION}/${AWS_BUCKET}"
+    depends_on:
+      minio:
+        condition:
+          service_healthy

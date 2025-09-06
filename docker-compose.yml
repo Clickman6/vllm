@@ -1,0 +1,90 @@
+services:
+  vllm:
+    build:
+      context: ./.docker/vllm
+      dockerfile: docker/Dockerfile.cpu
+      target: vllm-openai
+      args:
+        VLLM_CPU_AVX512BF16: "false"
+        VLLM_CPU_AVX512VNNI: "false"
+        VLLM_CPU_DISABLE_AVX512: "true"
+    image: vllm-cpu-env
+    privileged: true
+    shm_size: 4g
+    volumes:
+      - vllm-data:/root/.cache/huggingface
+    environment:
+      VLLM_CPU_KVCACHE_SPACE: "8"
+      VLLM_CPU_OMP_THREADS_BIND: "4"
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      interval: 30s
+      timeout: 30s
+      retries: 10
+      start_period: 120s
+
+  mlflow:
+    build:
+      dockerfile: .docker/mlflow/Dockerfile
+      context: ./
+      args:
+        MLFLOW_PORT: 5000
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL}
+      PGPASSWORD: ${DB_PASSWORD}
+    depends_on:
+      pgsql:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  pgsql:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${DB_DATABASE}
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - pg-data:/var/lib/postgresql/data:rw
+    healthcheck:
+      test: pg_isready -d ${DB_DATABASE:-app} -U ${DB_USERNAME:-laravel}
+      interval: 15s
+      timeout: 5s
+      start_period: 2s
+
+  minio:
+    image: minio/minio
+    environment:
+      MINIO_ROOT_USER: ${AWS_ACCESS_KEY_ID}
+      MINIO_ROOT_PASSWORD: ${AWS_SECRET_ACCESS_KEY}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  prometheus:
+    image: bitnami/prometheus:3.5.0
+    volumes:
+      - .docker/prometheus/config.yml:/etc/prometheus/prometheus.yml
+
+  grafana:
+    image: grafana/grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD}
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+    volumes:
+      - .docker/grafana/provisioning:/etc/grafana/provisioning
+      - .docker/grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus
+
+volumes:
+  pg-data: { }
+  minio-data: { }
+  vllm-data: { }
